@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AutoTrade · BTCUSD Futures</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css?v=neon3" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <span class="brand-mark">AT</span>
+          <div>
+            <strong>AutoTrade</strong>
+            <span>Delta Futures</span>
+          </div>
+        </div>
+
+        <nav class="side-nav">
+          <p class="nav-group">Trading</p>
+          <a class="nav-item active" href="#overview" data-nav="overview">
+            <span class="nav-ico">▣</span> Overview
+          </a>
+          <a class="nav-item" href="#live-market" data-nav="live-market">
+            <span class="nav-ico">◎</span> Live Market
+          </a>
+          <a class="nav-item" href="#signals" data-nav="signals">
+            <span class="nav-ico">⚡</span> Signals
+          </a>
+          <a class="nav-item" href="#position" data-nav="position">
+            <span class="nav-ico">◫</span> Open Position
+          </a>
+          <a class="nav-item" href="#trades" data-nav="trades">
+            <span class="nav-ico">☰</span> Trade Book
+          </a>
+
+          <p class="nav-group">Analysis</p>
+          <a class="nav-item" href="#live-market" data-nav="market-data">
+            <span class="nav-ico">▦</span> Market Data
+          </a>
+          <a class="nav-item" href="#orderbook" data-nav="orderbook">
+            <span class="nav-ico">▤</span> Order Book
+          </a>
+          <a class="nav-item" href="#live-market" data-nav="oi">
+            <span class="nav-ico">◉</span> Open Interest
+          </a>
+          <a class="nav-item" href="#live-market" data-nav="funding">
+            <span class="nav-ico">$</span> Funding Rate
+          </a>
+          <a class="nav-item" href="#levels" data-nav="liq">
+            <span class="nav-ico">↯</span> Liquidations
+          </a>
+          <a class="nav-item" href="#regime" data-nav="mtf">
+            <span class="nav-ico">⏱</span> Multi Timeframe
+          </a>
+
+          <p class="nav-group">Configuration</p>
+          <a class="nav-item" href="#signals" data-nav="strategy">
+            <span class="nav-ico">⚙</span> Strategy Settings
+          </a>
+          <a class="nav-item" href="#position" data-nav="risk">
+            <span class="nav-ico">🛡</span> Risk Management
+          </a>
+          <a class="nav-item" href="#overview" data-nav="exchange">
+            <span class="nav-ico">Δ</span> Exchange (Delta)
+          </a>
+          <a class="nav-item" href="#trades" data-nav="notify">
+            <span class="nav-ico">🔔</span> Notifications
+          </a>
+        </nav>
+      </aside>
+
+      <div class="main-wrap">
+        <header class="top-header">
+          <button class="icon-btn menu-toggle" id="menuToggle" aria-label="Toggle menu">☰</button>
+          <div class="top-tabs">
+            <button class="top-tab active">Dashboard</button>
+            <button class="top-tab">Strategy</button>
+            <button class="top-tab">Live Trade</button>
+            <button class="top-tab">Backtest</button>
+            <button class="top-tab">Trade Book</button>
+            <button class="top-tab">Analytics</button>
+            <button class="top-tab">Settings</button>
+          </div>
+          <div class="header-actions">
+            <button class="pill pill-purple" id="modePill">Paper · IST</button>
+            <button class="pill pill-live" id="livePill" title="WebSocket live feed"><span class="live-dot"></span> <span id="liveLabel">Connecting…</span></button>
+            <button class="btn-ghost" id="refreshBtn">Refresh</button>
+            <button class="btn-primary" id="signalBtn">Evaluate</button>
+          </div>
+        </header>
+
+        <main class="dashboard" id="overview">
+          <!-- Asset header -->
+          <section class="panel asset-header">
+            <div class="asset-left">
+              <div class="btc-icon">₿</div>
+              <div>
+                <h1>BTCUSD <span>Futures · Delta Exchange</span></h1>
+                <div class="price-row">
+                  <strong id="markPrice" class="price-xl bull">—</strong>
+                  <span id="priceChange" class="chg bull">—</span>
+                </div>
+              </div>
+            </div>
+            <div class="asset-stats" id="assetStats">
+              <div class="mini-stat"><span>24h High</span><strong id="statHigh">—</strong></div>
+              <div class="mini-stat"><span>24h Low</span><strong id="statLow">—</strong></div>
+              <div class="mini-stat"><span>24h Volume</span><strong id="statVol">—</strong></div>
+              <div class="mini-stat"><span>Open Interest</span><strong id="statOi">—</strong><em id="statOiChg"></em></div>
+              <div class="mini-stat"><span>Funding Rate</span><strong id="statFunding">—</strong></div>
+            </div>
+          </section>
+
+          <!-- Chart + Regime + Levels -->
+          <section class="grid-chart-row">
+            <article class="panel chart-panel">
+              <div class="panel-head">
+                <div>
+                  <h2>BTCUSD Perpetual</h2>
+                  <p class="muted">5m · EMA 9/21 · VWAP</p>
+                </div>
+                <div class="tf-pills" id="tfPills">
+                  <button class="tf" data-tf="1">1m</button>
+                  <button class="tf" data-tf="3">3m</button>
+                  <button class="tf active" data-tf="5">5m</button>
+                  <button class="tf" data-tf="15">15m</button>
+                  <button class="tf" data-tf="60">1H</button>
+                </div>
+              </div>
+              <div id="tv_chart" class="tv-chart"></div>
+            </article>
+
+            <div class="right-stack">
+              <article class="panel" id="regime">
+                <div class="panel-head">
+                  <h2>Market Regime</h2>
+                  <span class="chip" id="regimeChip">—</span>
+                </div>
+                <div class="regime-grid" id="regimeGrid"></div>
+                <div class="bias-block">
+                  <div>
+                    <span class="muted">Overall Bias</span>
+                    <strong id="overallBias" class="bias-text">—</strong>
+                  </div>
+                  <div class="confidence">
+                    <div class="conf-meta"><span>Confidence</span><span id="confPct">0%</span></div>
+                    <div class="bar"><i id="confBar" style="width:0%"></i></div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="panel" id="levels">
+                <div class="panel-head">
+                  <h2>Key Levels</h2>
+                </div>
+                <div class="tabs" id="levelsTabs">
+                  <button class="tab active" data-tab="sr">Support / Resistance</button>
+                  <button class="tab" data-tab="liq">Liquidation Heatmap</button>
+                  <button class="tab" data-tab="ob">Order Book</button>
+                </div>
+                <div class="levels-table" id="levelsTable"></div>
+                <div class="levels-table" id="liqTable" hidden></div>
+                <div class="ob-depth" id="obDepth" hidden></div>
+              </article>
+            </div>
+          </section>
+
+          <!-- Mid row: market / signal / position -->
+          <section class="grid-mid-row">
+            <article class="panel" id="live-market">
+              <div class="panel-head"><h2>Live Market Data</h2></div>
+              <div class="market-grid" id="marketGrid"></div>
+              <div class="ratio-block">
+                <div class="ratio-row">
+                  <span>Long / Short ratio</span>
+                  <strong id="lsRatio">—</strong>
+                </div>
+                <div class="dual-bar" id="lsBar"><i class="long" style="width:50%"></i><i class="short" style="width:50%"></i></div>
+                <div class="ratio-row">
+                  <span>Order Book Imbalance</span>
+                  <strong id="obImbalance">—</strong>
+                </div>
+                <div class="bar accent"><i id="obBar" style="width:0%"></i></div>
+              </div>
+              <div id="orderbook" class="ob-mini" hidden></div>
+            </article>
+
+            <article class="panel signal-panel" id="signals">
+              <div class="panel-head"><h2>AI / Strategy Signal</h2></div>
+              <div class="signal-hero" id="signalHero">
+                <div class="signal-orb wait" id="signalOrb">WAIT</div>
+                <p id="signalMsg">Evaluating market…</p>
+                <div class="signal-meta" id="signalMeta"></div>
+              </div>
+              <div class="checklist" id="checklist"></div>
+            </article>
+
+            <article class="panel" id="position">
+              <div class="panel-head">
+                <h2>Position &amp; Risk</h2>
+                <span class="chip" id="posStatus">No Open Position</span>
+              </div>
+              <div id="positionBody" class="position-body"></div>
+              <div class="risk-meters">
+                <div>
+                  <div class="conf-meta"><span>Max Daily Loss</span><span id="dailyLossPct">3%</span></div>
+                  <div class="bar danger"><i id="dailyLossBar" style="width:0%"></i></div>
+                </div>
+                <div>
+                  <div class="conf-meta"><span>Risk per Trade</span><span id="riskTradePct">1%</span></div>
+                  <div class="bar warn"><i id="riskTradeBar" style="width:100%"></i></div>
+                </div>
+              </div>
+              <div class="account-grid" id="accountGrid"></div>
+            </article>
+          </section>
+
+          <!-- Trades -->
+          <section class="panel trades-panel" id="trades">
+            <div class="panel-head">
+              <h2>Recent Trades <span class="muted">Paper Trading</span></h2>
+              <span class="chip chip-blue" id="tradeCount">0 trades</span>
+            </div>
+            <div class="table-wrap">
+              <table class="trades-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Time</th>
+                    <th>Side</th>
+                    <th>Entry</th>
+                    <th>Exit / Mark</th>
+                    <th>Qty (lots)</th>
+                    <th>P&amp;L</th>
+                    <th>Setup</th>
+                    <th>Leverage</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="tradesBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script src="/static/script.js?v=neon3"></script>
+  </body>
+</html>
