@@ -54,13 +54,130 @@ class DeltaMarketClient:
         self.loop = asyncio.get_event_loop()
         self.task: Optional[asyncio.Task] = None
         self._backoff = 5
+        self._rest_cycle = 0
 
     async def run(self) -> None:
-        self._fallback_rest_poll()
+        """Keep market data fresh via WS + always-on REST heartbeat."""
+        await asyncio.to_thread(self._fallback_rest_poll)
+        rest_task = asyncio.create_task(self._rest_heartbeat_loop())
+        try:
+            await self._ws_loop()
+        finally:
+            rest_task.cancel()
+            try:
+                await rest_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _rest_heartbeat_loop(self) -> None:
+        """Never leave the feed stale for hours if Delta WS dies silently."""
         while True:
             try:
-                async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=30) as websocket:
+                await asyncio.to_thread(self._light_rest_poll)
+                self._rest_cycle += 1
+                if self._rest_cycle % 8 == 0:
+                    await asyncio.to_thread(self._fallback_rest_poll)
+            except Exception as exc:  # pragma: no cover
+                print(f"REST heartbeat error: {exc}")
+            await asyncio.sleep(15)
+
+    def _light_rest_poll(self) -> None:
+        """Ticker + recent 1m/5m candles — cheap keep-alive for mark/P&L/signals."""
+        symbol = cfg.SYMBOL
+        ticker_url = f"{REST_BASE}/v2/tickers/{symbol}"
+        data = self._rest_get_json(ticker_url)
+        if data and isinstance(data, dict):
+            result = data.get("result")
+            if isinstance(result, dict):
+                price = float(result.get("close") or result.get("last_price") or result.get("mark_price") or 0.0)
+                self._save_snapshot(
+                    symbol=symbol,
+                    price=price,
+                    bid=float(result.get("bid") or 0.0),
+                    ask=float(result.get("ask") or 0.0),
+                    mark_price=float(result.get("mark_price") or price),
+                    volume=float(result.get("volume") or 0.0),
+                    oi=float(result.get("oi_value") or result.get("open_interest") or 0.0),
+                    oi_change_6h=float(result.get("oi_change_usd_6h") or 0.0),
+                    funding_rate=float(result.get("funding_rate") or 0.0)
+                    if result.get("funding_rate") is not None
+                    else None,
+                    last_trade_side=str(result.get("side") or ""),
+                )
+
+        end = int(time.time())
+        start = end - 3 * 3600
+        for resolution in ("1m", "5m"):
+            candles_url = (
+                f"{REST_BASE}/v2/history/candles?symbol={symbol}"
+                f"&resolution={resolution}&start={start}&end={end}&limit=120"
+            )
+            candle_payload = self._rest_get_json(candles_url)
+            if not candle_payload or not isinstance(candle_payload, dict):
+                continue
+            rows = candle_payload.get("result") or []
+            if not isinstance(rows, list):
+                continue
+            for row in rows[-40:]:
+                if not isinstance(row, dict):
+                    continue
+                self._save_candle(
+                    {
+                        "symbol": symbol,
+                        "interval": resolution,
+                        "open": float(row.get("open") or 0.0),
+                        "high": float(row.get("high") or 0.0),
+                        "low": float(row.get("low") or 0.0),
+                        "close": float(row.get("close") or 0.0),
+                        "volume": float(row.get("volume") or 0.0),
+                        "time": row.get("time"),
+                        "closed": True,
+                    }
+                )
+
+        orderbook_url = f"{REST_BASE}/v2/l2orderbook/{symbol}?depth=10"
+        orderbook_payload = self._rest_get_json(orderbook_url)
+        if isinstance(orderbook_payload, dict) and isinstance(orderbook_payload.get("result"), dict):
+            result = orderbook_payload["result"]
+            bids = result.get("buy") or []
+            asks = result.get("sell") or []
+            if bids and asks:
+                bid_payload = [
+                    [float(level.get("price", 0.0)), float(level.get("size", 0.0))] for level in bids[:10]
+                ]
+                ask_payload = [
+                    [float(level.get("price", 0.0)), float(level.get("size", 0.0))] for level in asks[:10]
+                ]
+                best_bid = float(bids[0].get("price", 0.0))
+                best_ask = float(asks[0].get("price", 0.0))
+                self._save_orderbook(
+                    symbol=symbol,
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    spread=best_ask - best_bid,
+                    bids=json.dumps(bid_payload),
+                    asks=json.dumps(ask_payload),
+                )
+
+    async def _ws_loop(self) -> None:
+        urls = [self.ws_url]
+        for alt in ("wss://public-socket.india.delta.exchange", "wss://socket.india.delta.exchange"):
+            if alt not in urls:
+                urls.append(alt)
+        url_idx = 0
+        while True:
+            url = urls[url_idx % len(urls)]
+            try:
+                async with websockets.connect(
+                    url,
+                    ping_interval=15,
+                    ping_timeout=20,
+                    close_timeout=5,
+                    max_queue=1024,
+                    user_agent_header="autotrade-paper/1.0",
+                ) as websocket:
                     self._backoff = 5
+                    print(f"Delta websocket connected: {url}")
                     candle_channels = [
                         {"name": f"candlestick_{res}", "symbols": [cfg.SYMBOL]}
                         for res in RESOLUTIONS
@@ -71,8 +188,10 @@ class DeltaMarketClient:
                                 "type": "subscribe",
                                 "payload": {
                                     "channels": [
+                                        {"name": "v2/ticker", "symbols": [cfg.SYMBOL]},
                                         {"name": "ticker", "symbols": [cfg.SYMBOL]},
                                         {"name": "trades", "symbols": [cfg.SYMBOL]},
+                                        {"name": "l2_orderbook", "symbols": [cfg.SYMBOL]},
                                         {"name": "ob_l2", "symbols": [cfg.SYMBOL]},
                                         *candle_channels,
                                         {"name": "mark_price", "symbols": [f"MARK:{cfg.SYMBOL}"]},
@@ -82,17 +201,32 @@ class DeltaMarketClient:
                             }
                         )
                     )
-                    async for raw_message in websocket:
+                    while True:
+                        try:
+                            raw_message = await asyncio.wait_for(websocket.recv(), timeout=45)
+                        except asyncio.TimeoutError:
+                            print("Delta websocket idle >45s — forcing reconnect")
+                            break
                         await self._handle_message(raw_message)
             except Exception as exc:  # pragma: no cover
-                print(f"Delta websocket reconnecting after error: {exc}")
-                await self._fallback_rest_poll()
+                print(f"Delta websocket reconnecting after error ({url}): {exc}")
+                url_idx += 1
+                try:
+                    await asyncio.to_thread(self._light_rest_poll)
+                except Exception:
+                    pass
                 await asyncio.sleep(self._backoff)
                 self._backoff = min(self._backoff * 2, 60)
 
     def _rest_get_json(self, url: str) -> Optional[Dict[str, Any]]:
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            req = urllib.request.Request(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "autotrade-paper/1.0",
+                },
+            )
             with urllib.request.urlopen(req, timeout=15) as response:
                 payload = response.read().decode("utf-8")
                 return json.loads(payload)
@@ -205,12 +339,29 @@ class DeltaMarketClient:
         if event_type in {"subscribe", "subscriptions", "pong", "auth"}:
             return
 
-        if channel == "ticker":
+        if channel in {"ticker", "v2/ticker"} or (isinstance(event_type, str) and "ticker" in event_type):
+            # Compact public feed OR legacy v2/ticker object
             ticker = payload.get("d")
             if isinstance(ticker, list):
                 ticker = ticker[0] if ticker else {}
             if not isinstance(ticker, dict):
                 ticker = payload if isinstance(payload.get("q"), list) else {}
+            if isinstance(data, dict) and (data.get("mark_price") or data.get("close") or data.get("symbol")):
+                symbol = str(data.get("symbol") or payload.get("symbol") or cfg.SYMBOL)
+                price = float(data.get("close") or data.get("last_price") or data.get("mark_price") or 0.0)
+                self._save_snapshot(
+                    symbol=symbol,
+                    price=price,
+                    bid=float(data.get("bid") or data.get("best_bid") or 0.0),
+                    ask=float(data.get("ask") or data.get("best_ask") or 0.0),
+                    mark_price=float(data.get("mark_price") or price),
+                    volume=float(data.get("volume") or 0.0),
+                    oi=float(data.get("oi") or data.get("open_interest") or 0.0),
+                    oi_change_6h=float(data.get("oi_change_usd_6h") or data.get("oi_change_6h") or 0.0),
+                    funding_rate=float(data["funding_rate"]) if data.get("funding_rate") is not None else None,
+                    last_trade_side=str(data.get("side") or ""),
+                )
+                return
             symbol = ticker.get("s") or payload.get("sy") or cfg.SYMBOL
             quotes = ticker.get("q") or []
             oi_info = ticker.get("oi") or []
@@ -219,19 +370,20 @@ class DeltaMarketClient:
                 (ohlc[3] if len(ohlc) > 3 else None)
                 or ticker.get("p")
                 or ticker.get("m")
+                or payload.get("close")
                 or 0.0
             )
-            bid = float(quotes[2]) if len(quotes) > 2 and quotes[2] is not None else 0.0
-            ask = float(quotes[0]) if len(quotes) > 0 and quotes[0] is not None else 0.0
-            oi = float(oi_info[0]) if len(oi_info) > 0 and oi_info[0] is not None else 0.0
+            bid = float(quotes[2]) if len(quotes) > 2 and quotes[2] is not None else float(payload.get("bid") or 0.0)
+            ask = float(quotes[0]) if len(quotes) > 0 and quotes[0] is not None else float(payload.get("ask") or 0.0)
+            oi = float(oi_info[0]) if len(oi_info) > 0 and oi_info[0] is not None else float(payload.get("oi") or 0.0)
             oi_change_6h = float(oi_info[1]) if len(oi_info) > 1 and oi_info[1] is not None else 0.0
             self._save_snapshot(
                 symbol=symbol,
                 price=price,
                 bid=bid,
                 ask=ask,
-                mark_price=float(ticker.get("m") or price),
-                volume=float(payload.get("v") or ticker.get("v") or 0.0),
+                mark_price=float(ticker.get("m") or payload.get("mark_price") or price),
+                volume=float(payload.get("v") or ticker.get("v") or payload.get("volume") or 0.0),
                 oi=oi,
                 oi_change_6h=oi_change_6h,
                 best_bid_size=float(quotes[3]) if len(quotes) > 3 and quotes[3] is not None else 0.0,
